@@ -71,6 +71,26 @@ static async Task<string> GenerateTextAsync(HttpClient ollamaHttpClient, string 
     return body?.Response?.Trim() ?? string.Empty;
 }
 
+static async Task<string> GeneratePlannerTextAsync(HttpClient ollamaHttpClient, string model, string prompt)
+{
+    var response = await ollamaHttpClient.PostAsJsonAsync("/api/generate", new
+    {
+        model,
+        prompt,
+        stream = false,
+        format = "json",
+        options = new
+        {
+            temperature = 0,
+            num_predict = 120
+        }
+    });
+
+    response.EnsureSuccessStatusCode();
+    var body = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>();
+    return body?.Response?.Trim() ?? string.Empty;
+}
+
 static async Task<string> EnsureModelAsync(HttpClient ollamaHttpClient)
 {
     var configuredModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL")?.Trim();
@@ -136,13 +156,21 @@ Return exactly one compact JSON object and nothing else with this schema:
 {"tool":"list_todos|create_todo|update_todo_status|none","title":"string or null","id":number or null,"status":"string or null"}
 """;
 
-    var raw = await GenerateTextAsync(ollamaHttpClient, model, planningPrompt);
-    if (TryParseToolPlan(raw, out var plan))
+    const int maxAttempts = 3;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
     {
-        return plan;
+        var raw = await GeneratePlannerTextAsync(ollamaHttpClient, model, planningPrompt);
+        if (TryParseToolPlan(raw, out var plan))
+        {
+            return plan;
+        }
+
+        Console.WriteLine($"[Planner] Attempt {attempt}/{maxAttempts} returned non-parseable output: {Truncate(raw, 400)}");
     }
 
-    throw new InvalidOperationException($"LLM planner did not return valid JSON for user request: {userRequest}");
+    Console.WriteLine("[Planner] Falling back to heuristic tool selection.");
+    return FallbackToolPlan(userRequest);
 }
 
 static bool TryParseToolPlan(string raw, out ToolPlan plan)
@@ -172,6 +200,12 @@ static bool TryParseToolPlan(string raw, out ToolPlan plan)
             return false;
         }
 
+        var normalizedTool = tool.Trim().ToLowerInvariant();
+        if (normalizedTool is not ("list_todos" or "create_todo" or "update_todo_status" or "none"))
+        {
+            return false;
+        }
+
         string? title = root.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String
             ? titleProp.GetString()
             : null;
@@ -184,7 +218,7 @@ static bool TryParseToolPlan(string raw, out ToolPlan plan)
             ? statusProp.GetString()
             : null;
 
-        plan = new ToolPlan(tool.Trim(), string.IsNullOrWhiteSpace(title) ? null : title.Trim(), id, string.IsNullOrWhiteSpace(status) ? null : status.Trim());
+        plan = new ToolPlan(normalizedTool, string.IsNullOrWhiteSpace(title) ? null : title.Trim(), id, string.IsNullOrWhiteSpace(status) ? null : status.Trim());
         return true;
     }
     catch
@@ -195,6 +229,18 @@ static bool TryParseToolPlan(string raw, out ToolPlan plan)
 
 static bool TryExtractJsonObject(string raw, out string json)
 {
+    raw = raw.Trim();
+
+    if (raw.StartsWith("```") && raw.EndsWith("```"))
+    {
+        var firstNewLine = raw.IndexOf('\n');
+        var lastFence = raw.LastIndexOf("```");
+        if (firstNewLine >= 0 && lastFence > firstNewLine)
+        {
+            raw = raw[(firstNewLine + 1)..lastFence].Trim();
+        }
+    }
+
     json = raw.Trim();
 
     if (json.StartsWith("{") && json.EndsWith("}"))
@@ -211,6 +257,34 @@ static bool TryExtractJsonObject(string raw, out string json)
 
     json = raw[start..(end + 1)];
     return true;
+}
+
+static ToolPlan FallbackToolPlan(string userRequest)
+{
+    var text = userRequest.Trim();
+    var lower = text.ToLowerInvariant();
+
+    if (lower.Contains("list") || lower.Contains("show") || lower.Contains("what") && lower.Contains("todo"))
+    {
+        return new ToolPlan("list_todos", null, null, null);
+    }
+
+    if (lower.Contains("create") || lower.Contains("add") || lower.Contains("new todo"))
+    {
+        return new ToolPlan("create_todo", text, null, null);
+    }
+
+    return new ToolPlan("none", null, null, null);
+}
+
+static string Truncate(string value, int maxLength)
+{
+    if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+    {
+        return value;
+    }
+
+    return value[..maxLength] + "...";
 }
 
 static async Task<string> ExecuteMcpToolAsync(HttpClient mcpHttpClient, ToolPlan plan)
