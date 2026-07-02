@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/SLNX/">
+    <File Path="docker-compose.yml" />
+  </Folder>
+  <Project Path="LlmClient/LlmClient.csproj" />
+  <Project Path="McpServer/McpServer.csproj" />
+  <Project Path="TodoApi/TodoApi.csproj" />
+</Solution>

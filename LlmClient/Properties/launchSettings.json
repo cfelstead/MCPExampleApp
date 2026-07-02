@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "LlmClient": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

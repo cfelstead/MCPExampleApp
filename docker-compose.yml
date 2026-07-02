@@ -1,0 +1,54 @@
+services:
+  # The Underlying business logic
+  todo-api:
+    build:
+      context: .
+      dockerfile: TodoApi/Dockerfile
+    container_name: todo-api
+    ports:
+      - "5000:5000"
+    networks:
+      - dotnet-mcp-network
+
+  # The Native Microsoft MCP translation layer 
+  mcp-server:
+    build:
+      context: .
+      dockerfile: McpServer/Dockerfile
+    container_name: mcp-server
+    ports:
+      - "6000:6000"
+    depends_on:
+      - todo-api
+    networks:
+      - dotnet-mcp-network
+
+  # The Open Weights LLM Engine
+  ollama-container:
+    image: ollama/ollama:latest
+    container_name: ollama-container
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - dotnet-mcp-network
+
+  # The Client Application that wires everything together
+  llm-client:
+    build:
+      context: .
+      dockerfile: LlmClient/Dockerfile
+    container_name: llm-client
+    depends_on:
+      - mcp-server
+      - ollama-container
+    networks:
+      - dotnet-mcp-network
+
+volumes:
+  ollama-models:
+
+networks:
+  dotnet-mcp-network:
+    driver: bridge

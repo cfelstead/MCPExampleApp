@@ -1,0 +1,21 @@
+@base_url = http://localhost:5000
+
+### Get Tasks
+GET {{base_url}}/todos
+Accept: application/json
+
+### Create Task
+POST {{base_url}}/todos
+Content-Type: application/json
+
+{
+    "title": "Validate native execution schemas"
+}
+
+### Update Status
+PUT {{base_url}}/todos/1/status
+Content-Type: application/json
+
+{
+    "status": "Completed"
+}
